@@ -1,0 +1,16 @@
+{
+    "extends": [
+        "development"
+    ],
+    "hints": {
+        "compat-api/css": [
+            "default",
+            {
+                "ignore": [
+                    "color: color-mix(in oklab, var(--color-primary) 85%, black)",
+                    "backdrop-filter"
+                ]
+            }
+        ]
+    }
+}
