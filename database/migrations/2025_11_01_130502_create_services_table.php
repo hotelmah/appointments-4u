@@ -13,6 +13,23 @@ return new class extends Migration
     {
         Schema::create('services', function (Blueprint $table) {
             $table->id();
+            $table->string('name', 256)->nullable();
+            $table->unsignedInteger('duration')->nullable();
+            $table->decimal('price', 10, 2)->nullable();
+            $table->string('currency', 32)->nullable();
+            $table->text('description')->nullable();
+            $table->string('color', 256)->default('#7cbae8');
+            $table->text('location')->nullable();
+            $table->string('availabilities_type', 32)->default('flexible');
+            $table->unsignedInteger('attendants_number')->default(1);
+            $table->boolean('is_private')->default(false);
+
+            $table->foreignId('id_service_categories')
+                ->nullable()
+                ->constrained('service_categories')
+                ->nullOnDelete()
+                ->cascadeOnUpdate();
+
             $table->timestamps();
         });
     }
