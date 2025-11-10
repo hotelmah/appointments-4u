@@ -604,4 +604,13 @@ class Setting extends Model
     {
         return static::getBool(self::DISPLAY_PRIVACY_POLICY, false);
     }
+
+    // Example Setting model query
+    protected function getNotesValidationRule(): string
+    {
+        $requireNotes = \App\Models\Setting::where('name', 'require_notes')
+            ->value('value') === '1';
+
+        return $requireNotes ? 'required|string' : 'nullable|string';
+    }
 }

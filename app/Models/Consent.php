@@ -201,7 +201,7 @@ class Consent extends Model
      * Revoke consent by creating a withdrawal record.
      * Note: This creates a new record to maintain audit trail.
      */
-    public static function revokeConsent(string $email, string $type, string $ip = null): self
+    public static function revokeConsent(string $email, string $type, ?string $ip = null): self
     {
         return self::create([
             'email' => $email,

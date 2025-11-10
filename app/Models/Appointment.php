@@ -41,6 +41,9 @@ class Appointment extends Model
         'start_datetime' => 'datetime',
         'end_datetime' => 'datetime',
         'is_unavailability' => 'boolean',
+        'id_users_provider' => 'integer',
+        'id_users_customer' => 'integer',
+        'id_services' => 'integer',
     ];
 
     /**
@@ -311,5 +314,103 @@ class Appointment extends Model
     {
         $this->status = 'completed';
         return $this->save();
+    }
+
+    /**
+     * Validation Methods
+     */
+
+    /**
+     * Validate that the provider ID exists and has the provider role.
+     *
+     * @param int $providerId
+     * @return bool
+     * @throws \InvalidArgumentException
+     */
+    public static function validateProvider(int $providerId): bool
+    {
+        $exists = User::where('id', $providerId)
+            ->whereHas('role', function ($query) {
+                $query->where('slug', 'provider');
+            })
+            ->exists();
+
+        if (!$exists) {
+            throw new \InvalidArgumentException(
+                "The appointment provider ID was not found in the database: {$providerId}"
+            );
+        }
+
+        return true;
+    }
+
+    /**
+     * Validate that the customer ID exists and has the customer role.
+     *
+     * @param int $customerId
+     * @return bool
+     * @throws \InvalidArgumentException
+     */
+    public static function validateCustomer(int $customerId): bool
+    {
+        $exists = User::where('id', $customerId)
+            ->whereHas('role', function ($query) {
+                $query->where('slug', 'customer');
+            })
+            ->exists();
+
+        if (!$exists) {
+            throw new \InvalidArgumentException(
+                "The appointment customer ID was not found in the database: {$customerId}"
+            );
+        }
+
+        return true;
+    }
+
+    /**
+     * Validate that the service ID exists in the database.
+     *
+     * @param int $serviceId
+     * @return bool
+     * @throws \InvalidArgumentException
+     */
+    public static function validateService(int $serviceId): bool
+    {
+        $exists = Service::where('id', $serviceId)->exists();
+
+        if (!$exists) {
+            throw new \InvalidArgumentException('Appointment service id is invalid.');
+        }
+
+        return true;
+    }
+
+    /**
+     * Validate all appointment foreign key relationships.
+     *
+     * @param array $data Appointment data to validate
+     * @return bool
+     * @throws \InvalidArgumentException
+     */
+    public static function validateAppointmentRelationships(array $data): bool
+    {
+        // Always validate provider
+        if (!empty($data['id_users_provider'])) {
+            self::validateProvider($data['id_users_provider']);
+        }
+
+        // Only validate customer and service for regular appointments (not unavailability)
+        if (empty($data['is_unavailability']) || !$data['is_unavailability']) {
+            if (!empty($data['id_users_customer'])) {
+                self::validateCustomer($data['id_users_customer']);
+            }
+
+            if (!empty($data['id_services'])) {
+                self::validateService($data['id_services']);
+            }
+        }
+
+        return true;
     }
 }
