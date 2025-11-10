@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Carbon\Carbon;
 
 class Service extends Model
 {
@@ -38,6 +39,8 @@ class Service extends Model
         'price' => 'decimal:2',
         'attendants_number' => 'integer',
         'is_private' => 'boolean',
+        'created_at' => 'datetime',
+        'updated_at' => 'datetime',
     ];
 
     /**
@@ -58,6 +61,8 @@ class Service extends Model
 
     /**
      * Get the category that the service belongs to.
+     *
+     * @return \Illuminate\Database\Eloquent\Relations\BelongsTo
      */
     public function category()
     {
@@ -67,6 +72,8 @@ class Service extends Model
     /**
      * Get the providers (users) that can offer this service.
      * Many-to-many relationship through services_providers pivot table.
+     *
+     * @return \Illuminate\Database\Eloquent\Relations\BelongsToMany
      */
     public function providers()
     {
@@ -80,6 +87,8 @@ class Service extends Model
 
     /**
      * Get the appointments for this service.
+     *
+     * @return \Illuminate\Database\Eloquent\Relations\HasMany
      */
     public function appointments()
     {
@@ -92,6 +101,8 @@ class Service extends Model
 
     /**
      * Get the formatted price with currency.
+     *
+     * @return string
      */
     public function getFormattedPriceAttribute(): string
     {
@@ -113,6 +124,8 @@ class Service extends Model
 
     /**
      * Get the duration in hours and minutes format.
+     *
+     * @return string
      */
     public function getFormattedDurationAttribute(): string
     {
@@ -134,6 +147,8 @@ class Service extends Model
 
     /**
      * Get the service name with category.
+     *
+     * @return string
      */
     public function getFullNameAttribute(): string
     {
@@ -145,6 +160,8 @@ class Service extends Model
 
     /**
      * Check if service allows multiple attendants.
+     *
+     * @return bool
      */
     public function getAllowsMultipleAttendantsAttribute(): bool
     {
@@ -153,6 +170,8 @@ class Service extends Model
 
     /**
      * Get availability type display name.
+     *
+     * @return string
      */
     public function getAvailabilityTypeDisplayAttribute(): string
     {
@@ -164,11 +183,37 @@ class Service extends Model
     }
 
     /**
+     * Get the number of bookings for this service.
+     *
+     * @return int
+     */
+    public function getBookingsCountAttribute(): int
+    {
+        return $this->appointments()->count();
+    }
+
+    /**
+     * Get active bookings (upcoming and not cancelled).
+     *
+     * @return int
+     */
+    public function getActiveBookingsCountAttribute(): int
+    {
+        return $this->appointments()
+            ->where('start_datetime', '>', now())
+            ->where('status', '!=', 'cancelled')
+            ->count();
+    }
+
+    /**
      * Scopes
      */
 
     /**
      * Scope a query to only include public services.
+     *
+     * @param \Illuminate\Database\Eloquent\Builder $query
+     * @return \Illuminate\Database\Eloquent\Builder
      */
     public function scopePublic($query)
     {
@@ -177,6 +222,9 @@ class Service extends Model
 
     /**
      * Scope a query to only include private services.
+     *
+     * @param \Illuminate\Database\Eloquent\Builder $query
+     * @return \Illuminate\Database\Eloquent\Builder
      */
     public function scopePrivate($query)
     {
@@ -185,6 +233,10 @@ class Service extends Model
 
     /**
      * Scope a query to services by category.
+     *
+     * @param \Illuminate\Database\Eloquent\Builder $query
+     * @param int $categoryId
+     * @return \Illuminate\Database\Eloquent\Builder
      */
     public function scopeByCategory($query, $categoryId)
     {
@@ -193,6 +245,11 @@ class Service extends Model
 
     /**
      * Scope a query to services within a price range.
+     *
+     * @param \Illuminate\Database\Eloquent\Builder $query
+     * @param float $minPrice
+     * @param float $maxPrice
+     * @return \Illuminate\Database\Eloquent\Builder
      */
     public function scopePriceBetween($query, $minPrice, $maxPrice)
     {
@@ -201,6 +258,10 @@ class Service extends Model
 
     /**
      * Scope a query to services by duration.
+     *
+     * @param \Illuminate\Database\Eloquent\Builder $query
+     * @param int $duration
+     * @return \Illuminate\Database\Eloquent\Builder
      */
     public function scopeByDuration($query, $duration)
     {
@@ -209,6 +270,9 @@ class Service extends Model
 
     /**
      * Scope a query to services with flexible availability.
+     *
+     * @param \Illuminate\Database\Eloquent\Builder $query
+     * @return \Illuminate\Database\Eloquent\Builder
      */
     public function scopeFlexible($query)
     {
@@ -217,6 +281,9 @@ class Service extends Model
 
     /**
      * Scope a query to services with fixed availability.
+     *
+     * @param \Illuminate\Database\Eloquent\Builder $query
+     * @return \Illuminate\Database\Eloquent\Builder
      */
     public function scopeFixed($query)
     {
@@ -225,6 +292,9 @@ class Service extends Model
 
     /**
      * Scope a query to services that allow multiple attendants.
+     *
+     * @param \Illuminate\Database\Eloquent\Builder $query
+     * @return \Illuminate\Database\Eloquent\Builder
      */
     public function scopeAllowsMultipleAttendants($query)
     {
@@ -233,6 +303,10 @@ class Service extends Model
 
     /**
      * Scope a query to services offered by a specific provider.
+     *
+     * @param \Illuminate\Database\Eloquent\Builder $query
+     * @param int $providerId
+     * @return \Illuminate\Database\Eloquent\Builder
      */
     public function scopeOfferedBy($query, $providerId)
     {
@@ -243,6 +317,10 @@ class Service extends Model
 
     /**
      * Scope a query to services by currency.
+     *
+     * @param \Illuminate\Database\Eloquent\Builder $query
+     * @param string $currency
+     * @return \Illuminate\Database\Eloquent\Builder
      */
     public function scopeByCurrency($query, $currency)
     {
@@ -251,6 +329,10 @@ class Service extends Model
 
     /**
      * Scope a query to search services by name or description.
+     *
+     * @param \Illuminate\Database\Eloquent\Builder $query
+     * @param string $searchTerm
+     * @return \Illuminate\Database\Eloquent\Builder
      */
     public function scopeSearch($query, $searchTerm)
     {
@@ -266,6 +348,8 @@ class Service extends Model
 
     /**
      * Check if service is available for booking.
+     *
+     * @return bool
      */
     public function isAvailableForBooking(): bool
     {
@@ -275,6 +359,9 @@ class Service extends Model
 
     /**
      * Check if service can accommodate additional attendants.
+     *
+     * @param int $requestedAttendants
+     * @return bool
      */
     public function canAccommodateAttendants(int $requestedAttendants): bool
     {
@@ -283,6 +370,8 @@ class Service extends Model
 
     /**
      * Get available providers for this service.
+     *
+     * @return \Illuminate\Database\Eloquent\Collection
      */
     public function getAvailableProviders()
     {
@@ -293,11 +382,14 @@ class Service extends Model
 
     /**
      * Calculate end time based on start time and service duration.
+     *
+     * @param string|\Carbon\Carbon $startDateTime
+     * @return \Carbon\Carbon
      */
-    public function calculateEndTime($startDateTime): \Carbon\Carbon
+    public function calculateEndTime($startDateTime): Carbon
     {
         $start = is_string($startDateTime)
-            ? \Carbon\Carbon::parse($startDateTime)
+            ? Carbon::parse($startDateTime)
             : $startDateTime;
 
         return $start->copy()->addMinutes($this->duration);
@@ -305,6 +397,8 @@ class Service extends Model
 
     /**
      * Get upcoming appointments for this service.
+     *
+     * @return \Illuminate\Database\Eloquent\Collection
      */
     public function getUpcomingAppointments()
     {
@@ -316,30 +410,14 @@ class Service extends Model
     }
 
     /**
-     * Get the number of bookings for this service.
-     */
-    public function getBookingsCountAttribute(): int
-    {
-        return $this->appointments()->count();
-    }
-
-    /**
-     * Get active bookings (upcoming and not cancelled).
-     */
-    public function getActiveBookingsCountAttribute(): int
-    {
-        return $this->appointments()
-            ->where('start_datetime', '>', now())
-            ->where('status', '!=', 'cancelled')
-            ->count();
-    }
-
-    /**
      * Check if service has available slots for a given date.
+     *
+     * @param string|\Carbon\Carbon $date
+     * @return bool
      */
     public function hasAvailableSlots($date): bool
     {
-        $date = is_string($date) ? \Carbon\Carbon::parse($date) : $date;
+        $date = is_string($date) ? Carbon::parse($date) : $date;
 
         // Get appointments for this service on the date
         $appointmentsCount = $this->appointments()

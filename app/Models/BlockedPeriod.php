@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Carbon\Carbon;
 
 class BlockedPeriod extends Model
 {
@@ -29,7 +30,14 @@ class BlockedPeriod extends Model
     protected $casts = [
         'start_datetime' => 'datetime',
         'end_datetime' => 'datetime',
+        'created_at' => 'datetime',  // ✅ ADDED
+        'updated_at' => 'datetime',  // ✅ ADDED
     ];
+
+    /**
+     * Relationships
+     */
+    // BlockedPeriod doesn't have direct relationships
 
     /**
      * Accessors & Mutators
@@ -206,7 +214,7 @@ class BlockedPeriod extends Model
      */
     public function contains($datetime): bool
     {
-        $datetime = is_string($datetime) ? \Carbon\Carbon::parse($datetime) : $datetime;
+        $datetime = is_string($datetime) ? Carbon::parse($datetime) : $datetime;
         return $datetime->between($this->start_datetime, $this->end_datetime);
     }
 
@@ -215,8 +223,8 @@ class BlockedPeriod extends Model
      */
     public function overlapsWithRange($startDate, $endDate): bool
     {
-        $startDate = is_string($startDate) ? \Carbon\Carbon::parse($startDate) : $startDate;
-        $endDate = is_string($endDate) ? \Carbon\Carbon::parse($endDate) : $endDate;
+        $startDate = is_string($startDate) ? Carbon::parse($startDate) : $startDate;
+        $endDate = is_string($endDate) ? Carbon::parse($endDate) : $endDate;
 
         return $this->start_datetime < $endDate && $this->end_datetime > $startDate;
     }
