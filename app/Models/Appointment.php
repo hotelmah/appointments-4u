@@ -64,9 +64,65 @@ class Appointment extends Model
 
         static::creating(function ($appointment) {
             if (empty($appointment->hash)) {
-                $appointment->hash = bin2hex(random_bytes(16));
+                $appointment->hash = self::generateUniqueHash();
             }
         });
+
+        // Fire events when status changes
+        static::updating(function ($appointment) {
+            if ($appointment->isDirty('status')) {
+                $oldStatus = $appointment->getOriginal('status');
+                $newStatus = $appointment->status;
+
+                // Dispatch events
+                // TODO: event(new AppointmentStatusChanged($appointment, $oldStatus, $newStatus));
+
+                // Send notifications based on status
+                if ($newStatus === 'confirmed') {
+                    // Mail::to($appointment->customer)->send(new AppointmentConfirmed($appointment));
+                } elseif ($newStatus === 'cancelled') {
+                    // Mail::to($appointment->customer)->send(new AppointmentCancelled($appointment));
+                }
+            }
+        });
+    }
+
+    /**
+     * Generate a unique appointment hash with collision checking.
+     *
+     * Migrated from CI3 Appointments_model::generate_unique_hash()
+     *
+     * @param int $maxAttempts Maximum number of attempts to generate unique hash
+     * @param int $hashLength Length of the hash to generate
+     * @return string Unique hash
+     * @throws \RuntimeException If unable to generate unique hash after max attempts
+     */
+    protected static function generateUniqueHash(int $maxAttempts = 10, int $hashLength = 16): string
+    {
+        for ($i = 0; $i < $maxAttempts; $i++) {
+            // Generate random hash (16 bytes = 32 hex characters)
+            $hash = bin2hex(random_bytes($hashLength));
+
+            // Check if hash already exists in database
+            $exists = static::where('hash', $hash)->exists();
+
+            if (!$exists) {
+                return $hash;
+            }
+        }
+
+        // Fallback: use longer hash if all attempts failed
+        // 20 bytes = 40 hex characters (increases uniqueness)
+        $longerHash = bin2hex(random_bytes($hashLength + 4));
+
+        // Final check - if this still exists, throw exception
+        if (static::where('hash', $longerHash)->exists()) {
+            throw new \RuntimeException(
+                'Unable to generate unique appointment hash after ' . $maxAttempts . ' attempts.'
+            );
+        }
+
+        return $longerHash;
     }
 
     /**
@@ -276,44 +332,291 @@ class Appointment extends Model
     }
 
     /**
-     * Helper Methods
+     * Query Builder Methods (Migrated from CI3)
      */
 
     /**
-     * Check if appointment conflicts with another appointment.
+     * Get all appointments that match the provided criteria.
+     *
+     * This method replicates the CI3 Appointments_model::get() functionality.
+     * Returns only regular appointments (not unavailability periods) by default.
+     *
+     * @param array|string|null $where Where conditions (array or raw string)
+     * @param int|null $limit Record limit
+     * @param int|null $offset Record offset
+     * @param string|null $orderBy Order by clause (e.g., 'start_datetime ASC')
+     * @return \Illuminate\Database\Eloquent\Collection
      */
-    public function conflictsWith(Appointment $other): bool
-    {
-        return $this->start_datetime < $other->end_datetime
-            && $this->end_datetime > $other->start_datetime
-            && $this->id_users_provider === $other->id_users_provider;
+    public static function getAppointments(
+        array|string|null $where = null,
+        ?int $limit = null,
+        ?int $offset = null,
+        ?string $orderBy = null
+    ) {
+        $query = static::regular(); // Only get regular appointments (is_unavailability = false)
+
+        // Apply where conditions
+        if ($where !== null) {
+            if (is_array($where)) {
+                // Array conditions: ['id_users_provider' => 5, 'status' => 'confirmed']
+                $query->where($where);
+            } else {
+                // Raw string conditions: "id_users_provider = 5 AND status = 'confirmed'"
+                $query->whereRaw($where);
+            }
+        }
+
+        // Apply ordering
+        if ($orderBy) {
+            // Parse order by string (e.g., "start_datetime ASC" or "id DESC")
+            $parts = explode(' ', trim($orderBy));
+            $column = $parts[0];
+            $direction = $parts[1] ?? 'asc';
+            $query->orderBy($column, $direction);
+        }
+
+        // Apply limit and offset
+        if ($limit !== null) {
+            $query->limit($limit);
+        }
+
+        if ($offset !== null) {
+            $query->offset($offset);
+        }
+
+        return $query->get();
     }
 
     /**
-     * Cancel the appointment.
+     * Get all appointments including unavailability periods.
+     *
+     * Similar to getAppointments() but includes unavailability records.
+     *
+     * @param array|string|null $where Where conditions
+     * @param int|null $limit Record limit
+     * @param int|null $offset Record offset
+     * @param string|null $orderBy Order by clause
+     * @return \Illuminate\Database\Eloquent\Collection
      */
-    public function cancel(): bool
-    {
-        $this->status = 'cancelled';
-        return $this->save();
+    public static function getAllAppointments(
+        array|string|null $where = null,
+        ?int $limit = null,
+        ?int $offset = null,
+        ?string $orderBy = null
+    ) {
+        $query = static::query();
+
+        // Apply where conditions
+        if ($where !== null) {
+            if (is_array($where)) {
+                $query->where($where);
+            } else {
+                $query->whereRaw($where);
+            }
+        }
+
+        // Apply ordering
+        if ($orderBy) {
+            $parts = explode(' ', trim($orderBy));
+            $column = $parts[0];
+            $direction = $parts[1] ?? 'asc';
+            $query->orderBy($column, $direction);
+        }
+
+        // Apply limit and offset
+        if ($limit !== null) {
+            $query->limit($limit);
+        }
+
+        if ($offset !== null) {
+            $query->offset($offset);
+        }
+
+        return $query->get();
     }
 
     /**
-     * Confirm the appointment.
+     * Conflict Detection & Capacity Management
      */
-    public function confirm(): bool
-    {
-        $this->status = 'confirmed';
-        return $this->save();
+
+    /**
+     * Get the number of attendants for a specific service and provider during a time period.
+     *
+     * This counts how many appointments overlap with the given time slot for the same
+     * service and provider. Used to check availability and prevent double-booking.
+     *
+     * Migrated from CI3 Appointments_model::get_attendants_number_for_period()
+     *
+     * @param \DateTime|\Carbon\Carbon $start Period start datetime
+     * @param \DateTime|\Carbon\Carbon $end Period end datetime
+     * @param int $serviceId Service ID
+     * @param int $providerId Provider ID
+     * @param int|null $excludeAppointmentId Exclude an appointment from the count (for updates)
+     * @return int Number of overlapping appointments
+     */
+    public static function getAttendantsNumberForPeriod(
+        \DateTime|\Carbon\Carbon $start,
+        \DateTime|\Carbon\Carbon $end,
+        int $serviceId,
+        int $providerId,
+        ?int $excludeAppointmentId = null
+    ): int {
+        $query = static::where('id_services', $serviceId)
+            ->where('id_users_provider', $providerId)
+            ->where(function ($query) use ($start, $end) {
+                // Check for overlapping appointments
+                // Case 1: Appointment starts before or at period start and ends after period start
+                $query->where(function ($q) use ($start, $end) {
+                    $q->where('start_datetime', '<=', $start)
+                      ->where('end_datetime', '>', $start);
+                })
+                // Case 2: Appointment starts before period end and ends at or after period end
+                ->orWhere(function ($q) use ($start, $end) {
+                    $q->where('start_datetime', '<', $end)
+                      ->where('end_datetime', '>=', $end);
+                })
+                // Case 3: Appointment is completely within the period
+                ->orWhere(function ($q) use ($start, $end) {
+                    $q->where('start_datetime', '>=', $start)
+                      ->where('end_datetime', '<=', $end);
+                });
+            });
+
+        // Exclude specific appointment (useful when updating an existing appointment)
+        if ($excludeAppointmentId) {
+            $query->where('id', '!=', $excludeAppointmentId);
+        }
+
+        return $query->count();
     }
 
     /**
-     * Mark appointment as completed.
+     * Get the number of attendants for OTHER services during a time period.
+     *
+     * This counts how many appointments for different services overlap with the given
+     * time slot for the same provider. Used to check if provider is busy with other services.
+     *
+     * Migrated from CI3 Appointments_model::get_other_service_attendants_number()
+     *
+     * @param \DateTime|\Carbon\Carbon $start Period start datetime
+     * @param \DateTime|\Carbon\Carbon $end Period end datetime
+     * @param int $serviceId Service ID (to exclude)
+     * @param int $providerId Provider ID
+     * @param int|null $excludeAppointmentId Exclude an appointment from the count (for updates)
+     * @return int Number of overlapping appointments for other services
      */
-    public function complete(): bool
-    {
-        $this->status = 'completed';
-        return $this->save();
+    public static function getOtherServiceAttendantsNumber(
+        \DateTime|\Carbon\Carbon $start,
+        \DateTime|\Carbon\Carbon $end,
+        int $serviceId,
+        int $providerId,
+        ?int $excludeAppointmentId = null
+    ): int {
+        $query = static::where('id_services', '!=', $serviceId) // Different service
+            ->where('id_users_provider', $providerId)
+            ->where(function ($query) use ($start, $end) {
+                // Check for overlapping appointments (same logic as above)
+                $query->where(function ($q) use ($start, $end) {
+                    $q->where('start_datetime', '<=', $start)
+                      ->where('end_datetime', '>', $start);
+                })
+                ->orWhere(function ($q) use ($start, $end) {
+                    $q->where('start_datetime', '<', $end)
+                      ->where('end_datetime', '>=', $end);
+                })
+                ->orWhere(function ($q) use ($start, $end) {
+                    $q->where('start_datetime', '>=', $start)
+                      ->where('end_datetime', '<=', $end);
+                });
+            });
+
+        // Exclude specific appointment
+        if ($excludeAppointmentId) {
+            $query->where('id', '!=', $excludeAppointmentId);
+        }
+
+        return $query->count();
+    }
+
+    /**
+     * Check if a time slot is available for a provider and service.
+     *
+     * Helper method that uses the attendants number methods to determine availability.
+     *
+     * @param \DateTime|\Carbon\Carbon $start Start datetime
+     * @param \DateTime|\Carbon\Carbon $end End datetime
+     * @param int $serviceId Service ID
+     * @param int $providerId Provider ID
+     * @param int|null $excludeAppointmentId Exclude appointment ID (for updates)
+     * @return bool True if slot is available, false if conflicts exist
+     */
+    public static function isSlotAvailable(
+        \DateTime|\Carbon\Carbon $start,
+        \DateTime|\Carbon\Carbon $end,
+        int $serviceId,
+        int $providerId,
+        ?int $excludeAppointmentId = null
+    ): bool {
+        // Check for conflicts with same service
+        $sameServiceConflicts = static::getAttendantsNumberForPeriod(
+            $start,
+            $end,
+            $serviceId,
+            $providerId,
+            $excludeAppointmentId
+        );
+
+        // Check for conflicts with other services
+        $otherServiceConflicts = static::getOtherServiceAttendantsNumber(
+            $start,
+            $end,
+            $serviceId,
+            $providerId,
+            $excludeAppointmentId
+        );
+
+        // Slot is available if no conflicts exist
+        return $sameServiceConflicts === 0 && $otherServiceConflicts === 0;
+    }
+
+    /**
+     * Get all conflicting appointments for a time period.
+     *
+     * Returns the actual appointment records that conflict, not just a count.
+     *
+     * @param \DateTime|\Carbon\Carbon $start Start datetime
+     * @param \DateTime|\Carbon\Carbon $end End datetime
+     * @param int $providerId Provider ID
+     * @param int|null $excludeAppointmentId Exclude appointment ID
+     * @return \Illuminate\Database\Eloquent\Collection Collection of conflicting appointments
+     */
+    public static function getConflictingAppointments(
+        \DateTime|\Carbon\Carbon $start,
+        \DateTime|\Carbon\Carbon $end,
+        int $providerId,
+        ?int $excludeAppointmentId = null
+    ) {
+        $query = static::where('id_users_provider', $providerId)
+            ->where(function ($query) use ($start, $end) {
+                $query->where(function ($q) use ($start, $end) {
+                    $q->where('start_datetime', '<=', $start)
+                      ->where('end_datetime', '>', $start);
+                })
+                ->orWhere(function ($q) use ($start, $end) {
+                    $q->where('start_datetime', '<', $end)
+                      ->where('end_datetime', '>=', $end);
+                })
+                ->orWhere(function ($q) use ($start, $end) {
+                    $q->where('start_datetime', '>=', $start)
+                      ->where('end_datetime', '<=', $end);
+                });
+            });
+
+        if ($excludeAppointmentId) {
+            $query->where('id', '!=', $excludeAppointmentId);
+        }
+
+        return $query->with(['service', 'customer'])->get();
     }
 
     /**
@@ -412,5 +715,307 @@ class Appointment extends Model
         }
 
         return true;
+    }
+
+    /**
+     * Helper Methods
+     */
+
+    /**
+     * Check if appointment conflicts with another appointment.
+     *
+     * This is a simple instance method for checking conflicts between two appointments.
+     * For more complex conflict checking, use the static conflict detection methods.
+     */
+    public function conflictsWith(Appointment $other): bool
+    {
+        return $this->start_datetime < $other->end_datetime
+            && $this->end_datetime > $other->start_datetime
+            && $this->id_users_provider === $other->id_users_provider;
+    }
+
+    /**
+     * Cancel the appointment.
+     *
+     * @return bool True if successful, false otherwise
+     * @throws \InvalidArgumentException If appointment cannot be cancelled
+     */
+    public function cancel(): bool
+    {
+        // Can't cancel completed or already cancelled appointments
+        if ($this->isCompleted()) {
+            throw new \InvalidArgumentException('Cannot cancel a completed appointment.');
+        }
+
+        if ($this->isCancelled()) {
+            throw new \InvalidArgumentException('Appointment is already cancelled.');
+        }
+
+        $this->status = 'cancelled';
+        return $this->save();
+    }
+
+    /**
+     * Confirm the appointment.
+     *
+     * @return bool True if successful, false otherwise
+     * @throws \InvalidArgumentException If appointment cannot be confirmed
+     */
+    public function confirm(): bool
+    {
+        // Can only confirm pending appointments
+        if (!$this->isPending()) {
+            throw new \InvalidArgumentException(
+                'Only pending appointments can be confirmed.'
+            );
+        }
+
+        $this->status = 'confirmed';
+        return $this->save();
+    }
+
+    /**
+     * Mark appointment as completed.
+     *
+     * @return bool True if successful, false otherwise
+     * @throws \InvalidArgumentException If appointment cannot be completed
+     */
+    public function complete(): bool
+    {
+        // Can only complete confirmed appointments
+        if (!$this->isConfirmed()) {
+            throw new \InvalidArgumentException(
+                'Only confirmed appointments can be marked as completed.'
+            );
+        }
+
+        // Can't complete future appointments
+        if ($this->isUpcoming) {
+            throw new \InvalidArgumentException(
+                'Cannot complete an appointment that hasn\'t occurred yet.'
+            );
+        }
+
+        $this->status = 'completed';
+        return $this->save();
+    }
+
+    /**
+     * Mark appointment as pending (initial status).
+     *
+     * @return bool True if successful, false otherwise
+     */
+    public function markPending(): bool
+    {
+        $this->status = 'pending';
+        return $this->save();
+    }
+
+    /**
+     * Check if appointment is confirmed.
+     *
+     * @return bool
+     */
+    public function isConfirmed(): bool
+    {
+        return $this->status === 'confirmed';
+    }
+
+    /**
+     * Check if appointment is cancelled.
+     *
+     * @return bool
+     */
+    public function isCancelled(): bool
+    {
+        return $this->status === 'cancelled';
+    }
+
+    /**
+     * Check if appointment is completed.
+     *
+     * @return bool
+     */
+    public function isCompleted(): bool
+    {
+        return $this->status === 'completed';
+    }
+
+    /**
+     * Check if appointment is pending.
+     *
+     * @return bool
+     */
+    public function isPending(): bool
+    {
+        return $this->status === 'pending';
+    }
+
+    /**
+     * Search Methods
+     */
+
+    /**
+     * Search appointments by keyword across multiple fields.
+     *
+     * Searches through appointment fields, service details, provider info, and customer info.
+     * Migrated from CI3 Appointments_model::search()
+     *
+     * @param string $keyword Search keyword
+     * @param int|null $limit Record limit
+     * @param int|null $offset Record offset
+     * @param string|null $orderBy Order by clause (e.g., 'start_datetime ASC')
+     * @return \Illuminate\Database\Eloquent\Collection
+     */
+    public static function search(
+        string $keyword,
+        ?int $limit = null,
+        ?int $offset = null,
+        ?string $orderBy = null
+    ) {
+        $query = static::select('appointments.*')
+        ->leftJoin('services', 'services.id', '=', 'appointments.id_services')
+        ->join('users as providers', 'providers.id', '=', 'appointments.id_users_provider')
+        ->leftJoin('users as customers', 'customers.id', '=', 'appointments.id_users_customer')
+        ->where('appointments.is_unavailability', false)
+        ->where(function ($q) use ($keyword) {
+            // Search in appointment fields
+            $q->where('appointments.start_datetime', 'LIKE', "%{$keyword}%")
+              ->orWhere('appointments.end_datetime', 'LIKE', "%{$keyword}%")
+              ->orWhere('appointments.location', 'LIKE', "%{$keyword}%")
+              ->orWhere('appointments.hash', 'LIKE', "%{$keyword}%")
+              ->orWhere('appointments.notes', 'LIKE', "%{$keyword}%")
+              ->orWhere('appointments.status', 'LIKE', "%{$keyword}%")
+
+              // Search in service fields
+              ->orWhere('services.name', 'LIKE', "%{$keyword}%")
+              ->orWhere('services.description', 'LIKE', "%{$keyword}%")
+
+              // Search in provider fields
+              ->orWhere('providers.first_name', 'LIKE', "%{$keyword}%")
+              ->orWhere('providers.last_name', 'LIKE', "%{$keyword}%")
+              ->orWhere('providers.email', 'LIKE', "%{$keyword}%")
+              ->orWhere('providers.phone_number', 'LIKE', "%{$keyword}%")
+              ->orWhere('providers.mobile_number', 'LIKE', "%{$keyword}%")
+
+              // Search in customer fields
+              ->orWhere('customers.first_name', 'LIKE', "%{$keyword}%")
+              ->orWhere('customers.last_name', 'LIKE', "%{$keyword}%")
+              ->orWhere('customers.email', 'LIKE', "%{$keyword}%")
+              ->orWhere('customers.phone_number', 'LIKE', "%{$keyword}%")
+              ->orWhere('customers.mobile_number', 'LIKE', "%{$keyword}%");
+        });
+
+        // Apply ordering
+        if ($orderBy) {
+            $parts = explode(' ', trim($orderBy));
+            $column = $parts[0];
+            $direction = $parts[1] ?? 'asc';
+            $query->orderBy($column, $direction);
+        } else {
+            // Default ordering: most recent first
+            $query->orderBy('appointments.start_datetime', 'desc');
+        }
+
+        // Apply limit and offset
+        if ($limit !== null) {
+            $query->limit($limit);
+        }
+
+        if ($offset !== null) {
+            $query->offset($offset);
+        }
+
+        return $query->get();
+    }
+
+    /**
+    * Advanced search with filters.
+    *
+    * More flexible search method that supports multiple search criteria.
+    *
+    * @param array $filters Search filters
+    * @return \Illuminate\Database\Eloquent\Collection
+    */
+    public static function advancedSearch(array $filters = [])
+    {
+        $query = static::select('appointments.*')
+            ->leftJoin('services', 'services.id', '=', 'appointments.id_services')
+            ->join('users as providers', 'providers.id', '=', 'appointments.id_users_provider')
+            ->leftJoin('users as customers', 'customers.id', '=', 'appointments.id_users_customer')
+            ->where('appointments.is_unavailability', false);
+
+        // Keyword search
+        if (!empty($filters['keyword'])) {
+            $keyword = $filters['keyword'];
+            $query->where(function ($q) use ($keyword) {
+                $q->where('appointments.location', 'LIKE', "%{$keyword}%")
+                ->orWhere('appointments.notes', 'LIKE', "%{$keyword}%")
+                ->orWhere('services.name', 'LIKE', "%{$keyword}%")
+                ->orWhere('providers.first_name', 'LIKE', "%{$keyword}%")
+                ->orWhere('providers.last_name', 'LIKE', "%{$keyword}%")
+                ->orWhere('customers.first_name', 'LIKE', "%{$keyword}%")
+                ->orWhere('customers.last_name', 'LIKE', "%{$keyword}%");
+            });
+        }
+
+        // Provider filter
+        if (!empty($filters['provider_id'])) {
+            $query->where('appointments.id_users_provider', $filters['provider_id']);
+        }
+
+        // Customer filter
+        if (!empty($filters['customer_id'])) {
+            $query->where('appointments.id_users_customer', $filters['customer_id']);
+        }
+
+        // Service filter
+        if (!empty($filters['service_id'])) {
+            $query->where('appointments.id_services', $filters['service_id']);
+        }
+
+        // Status filter
+        if (!empty($filters['status'])) {
+            $query->where('appointments.status', $filters['status']);
+        }
+
+        // Date range filter
+        if (!empty($filters['start_date'])) {
+            $query->whereDate('appointments.start_datetime', '>=', $filters['start_date']);
+        }
+
+        if (!empty($filters['end_date'])) {
+            $query->whereDate('appointments.start_datetime', '<=', $filters['end_date']);
+        }
+
+        // Apply ordering
+        $orderBy = $filters['order_by'] ?? 'appointments.start_datetime';
+        $orderDirection = $filters['order_direction'] ?? 'desc';
+        $query->orderBy($orderBy, $orderDirection);
+
+        // Apply pagination
+        $limit = $filters['limit'] ?? 15;
+        $offset = $filters['offset'] ?? 0;
+
+        return $query->limit($limit)->offset($offset)->get();
+    }
+
+    /**
+    * Scope for searching appointments (chainable with other scopes).
+    *
+    * @param \Illuminate\Database\Eloquent\Builder $query
+    * @param string $keyword
+    * @return \Illuminate\Database\Eloquent\Builder
+    */
+    public function scopeSearchByKeyword($query, string $keyword)
+    {
+        return $query->where(function ($q) use ($keyword) {
+            $q->where('start_datetime', 'LIKE', "%{$keyword}%")
+            ->orWhere('end_datetime', 'LIKE', "%{$keyword}%")
+            ->orWhere('location', 'LIKE', "%{$keyword}%")
+            ->orWhere('hash', 'LIKE', "%{$keyword}%")
+            ->orWhere('notes', 'LIKE', "%{$keyword}%")
+            ->orWhere('status', 'LIKE', "%{$keyword}%");
+        });
     }
 }
