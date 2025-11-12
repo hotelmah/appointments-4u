@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\BookingController;
+use App\Http\Controllers\BlockedPeriodController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', function () {
@@ -39,5 +40,38 @@ Route::prefix('booking')->group(function () {
     Route::patch('/{id}/cancel', [BookingController::class, 'cancelAppointment']);
     Route::patch('/{id}/confirm', [BookingController::class, 'confirmAppointment']);
 });
+
+
+Route::prefix('blocked-periods')->group(function () {
+    // CRUD routes
+    Route::get('/', [BlockedPeriodController::class, 'index']);
+    Route::get('/{id}', [BlockedPeriodController::class, 'show']);
+    Route::post('/', [BlockedPeriodController::class, 'store']);
+    Route::put('/{id}', [BlockedPeriodController::class, 'update']);
+    Route::delete('/{id}', [BlockedPeriodController::class, 'destroy']);
+
+    // Period-based queries
+    Route::post('/for-period', [BlockedPeriodController::class, 'getForPeriod']);
+    Route::post('/for-date', [BlockedPeriodController::class, 'getForDate']);
+    Route::post('/check-date', [BlockedPeriodController::class, 'checkDateBlocked']);
+    Route::post('/check-working-hours', [BlockedPeriodController::class, 'checkWorkingHours']);
+
+    // Query routes
+    Route::post('/get-filtered', [BlockedPeriodController::class, 'getFiltered']);
+    Route::post('/get-by-criteria', [BlockedPeriodController::class, 'getByCriteria']);
+
+    // Search routes
+    Route::get('/search', [BlockedPeriodController::class, 'search']);
+    Route::post('/advanced-search', [BlockedPeriodController::class, 'advancedSearch']);
+
+    // CI3 compatibility routes
+    Route::post('/find', [BlockedPeriodController::class, 'find']);
+    Route::post('/value', [BlockedPeriodController::class, 'getValue']);
+    Route::post('/values', [BlockedPeriodController::class, 'getValues']);
+
+    // Utility routes
+    Route::post('/check-overlaps', [BlockedPeriodController::class, 'checkOverlaps']);
+});
+
 
 require __DIR__ . '/auth.php';
