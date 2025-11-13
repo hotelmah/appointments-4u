@@ -586,4 +586,82 @@ class UserSetting extends Model
 
         return true;
     }
+
+    /**
+     * Static helper to get settings for a user.
+     *
+     * @param int $userId
+     * @return array
+     */
+    public static function getForUser(int $userId): array
+    {
+        $settings = static::where('id_users', $userId)->first();
+
+        if (!$settings) {
+            return [];
+        }
+
+        $settingsArray = $settings->toArray();
+
+        // Remove sensitive fields
+        unset($settingsArray['id_users']);
+
+        return $settingsArray;
+    }
+
+    /**
+     * Static helper to set all settings for a user.
+     *
+     * @param int $userId
+     * @param array $settingsData
+     * @return void
+     */
+    public static function setForUser(int $userId, array $settingsData): void
+    {
+        $settings = static::where('id_users', $userId)->first();
+
+        if (!$settings) {
+            $settings = static::create(array_merge(['id_users' => $userId], $settingsData));
+        } else {
+            $settings->update($settingsData);
+        }
+    }
+
+    /**
+     * Static helper to set a single setting for a user.
+     *
+     * @param int $userId
+     * @param string $key
+     * @param mixed $value
+     * @return void
+     */
+    public static function setForUserKey(int $userId, string $key, mixed $value): void
+    {
+        $settings = static::where('id_users', $userId)->first();
+
+        if (!$settings) {
+            $settings = static::create(['id_users' => $userId, $key => $value]);
+        } else {
+            $settings->update([$key => $value]);
+        }
+    }
+
+    /**
+     * Static helper to get a single setting value.
+     *
+     * @param int $userId
+     * @param string $key
+     * @param mixed $default
+     * @return mixed
+     */
+    public static function getForUserKey(int $userId, string $key, mixed $default = null): mixed
+    {
+        $settings = static::where('id_users', $userId)->first();
+
+        if (!$settings) {
+            return $default;
+        }
+
+        return $settings->{$key} ?? $default;
+    }
 }

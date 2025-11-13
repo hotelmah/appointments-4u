@@ -3,6 +3,7 @@
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\BookingController;
 use App\Http\Controllers\BlockedPeriodController;
+use App\Http\Controllers\AdminController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', function () {
@@ -71,6 +72,41 @@ Route::prefix('blocked-periods')->group(function () {
 
     // Utility routes
     Route::post('/check-overlaps', [BlockedPeriodController::class, 'checkOverlaps']);
+});
+
+// Admin management routes
+Route::middleware(['auth'])->prefix('admins')->group(function () {
+    // CRUD routes
+    Route::get('/', [AdminController::class, 'index']);
+    Route::get('/search', [AdminController::class, 'search']);
+    Route::post('/', [AdminController::class, 'store']);
+    Route::post('/find', [AdminController::class, 'find']);
+    Route::post('/find-by-username', [AdminController::class, 'findByUsername']);
+    Route::put('/{id}', [AdminController::class, 'update']);
+    Route::delete('/{id}', [AdminController::class, 'destroy']);
+
+    // Batch operations
+    Route::post('/batch-delete', [AdminController::class, 'destroy']);
+    Route::post('/find-many', [AdminController::class, 'findMany']);
+    Route::post('/get', [AdminController::class, 'get']);
+
+    // Field operations
+    Route::post('/get-value', [AdminController::class, 'getValue']);
+    Route::post('/get-values', [AdminController::class, 'getValues']);
+    Route::post('/has-field', [AdminController::class, 'hasField']);
+    Route::post('/available-fields', [AdminController::class, 'getAvailableFields']);
+
+    // ✅ Username validation routes
+    Route::post('/validate-username', [AdminController::class, 'validateUsername']);
+    Route::post('/check-username', [AdminController::class, 'checkUsername']);
+
+    // Settings routes
+    Route::post('/get-settings', [AdminController::class, 'getSettings']);
+    Route::post('/get-setting', [AdminController::class, 'getSetting']);
+    Route::post('/get-setting-values', [AdminController::class, 'getSettingValues']);
+    Route::post('/has-setting', [AdminController::class, 'hasUserSetting']);
+    Route::post('/update-settings', [AdminController::class, 'updateSettings']);
+    Route::post('/update-setting', [AdminController::class, 'updateSetting']);
 });
 
 
